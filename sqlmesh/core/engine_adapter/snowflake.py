@@ -757,14 +757,34 @@ class SnowflakeEngineAdapter(
     def get_table_last_modified_ts(self, table_names: t.List[TableName]) -> t.List[int]:
         from sqlmesh.utils.date import to_timestamp
 
-        num_tables = len(table_names)
-
-        query = "SELECT LAST_ALTERED FROM INFORMATION_SCHEMA.TABLES WHERE"
-        for i, table_name in enumerate(table_names):
+        # INFORMATION_SCHEMA only contains the objects of the database it belongs to, so the tables
+        # are grouped by database and each group is looked up in its own database's INFORMATION_SCHEMA
+        catalogs_to_tables: t.Dict[str, t.List[exp.Table]] = {}
+        for table_name in table_names:
             table = exp.to_table(table_name)
-            query += f"""(TABLE_NAME = '{table.name}' AND TABLE_SCHEMA = '{table.db}' AND TABLE_CATALOG = '{table.catalog}')"""
-            if i < num_tables - 1:
-                query += " OR "
+            catalogs_to_tables.setdefault(table.catalog, []).append(table)
 
-        result = self.fetchall(query)
-        return [to_timestamp(row[0]) for row in result]
+        results = []
+        for tables in catalogs_to_tables.values():
+            query = (
+                exp.select("LAST_ALTERED")
+                .from_(
+                    exp.table_(
+                        "TABLES", db="INFORMATION_SCHEMA", catalog=tables[0].args.get("catalog")
+                    )
+                )
+                .where(
+                    exp.or_(
+                        *(
+                            exp.and_(
+                                exp.column("TABLE_NAME").eq(exp.Literal.string(table.name)),
+                                exp.column("TABLE_SCHEMA").eq(exp.Literal.string(table.db)),
+                            )
+                            for table in tables
+                        )
+                    )
+                )
+            )
+            results.extend(self.fetchall(query))
+
+        return [to_timestamp(row[0]) for row in results]

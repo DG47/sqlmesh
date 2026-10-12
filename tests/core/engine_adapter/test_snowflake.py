@@ -1,4 +1,5 @@
 import typing as t
+from datetime import datetime, timezone
 
 import pandas as pd  # noqa: TID253
 import pytest
@@ -14,6 +15,7 @@ from sqlmesh.core.engine_adapter.shared import DataObjectType
 from sqlmesh.core.model import load_sql_based_model
 from sqlmesh.core.model.definition import SqlModel
 from sqlmesh.core.node import IntervalUnit
+from sqlmesh.utils.date import to_timestamp
 from sqlmesh.utils.errors import SQLMeshError
 from sqlmesh.utils import optional_import
 from tests.core.engine_adapter import to_sql_calls
@@ -71,6 +73,38 @@ def test_get_data_objects_lowercases_columns(
     assert data_object.name == "MY_TABLE"
     assert data_object.type == DataObjectType.TABLE
     assert data_object.clustering_key == "ID"
+
+
+def test_get_table_last_modified_ts_multiple_catalogs(
+    snowflake_mocked_engine_adapter: SnowflakeEngineAdapter,
+) -> None:
+    adapter = snowflake_mocked_engine_adapter
+    adapter.cursor.fetchall.side_effect = [
+        [
+            (datetime(2025, 1, 1, tzinfo=timezone.utc),),
+            (datetime(2025, 1, 2, tzinfo=timezone.utc),),
+        ],
+        [(datetime(2025, 1, 3, tzinfo=timezone.utc),)],
+    ]
+
+    result = adapter.get_table_last_modified_ts(
+        [
+            '"ANALYTICS"."STAGING"."ORDERS"',
+            '"RAW"."SHOPIFY"."ORDERS"',
+            '"ANALYTICS"."STAGING"."CUSTOMERS"',
+        ]
+    )
+
+    # INFORMATION_SCHEMA only covers the database it belongs to, so each database is queried separately
+    assert to_sql_calls(adapter) == [
+        """SELECT LAST_ALTERED FROM "ANALYTICS".INFORMATION_SCHEMA.TABLES WHERE (TABLE_NAME = 'ORDERS' AND TABLE_SCHEMA = 'STAGING') OR (TABLE_NAME = 'CUSTOMERS' AND TABLE_SCHEMA = 'STAGING')""",
+        """SELECT LAST_ALTERED FROM "RAW".INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ORDERS' AND TABLE_SCHEMA = 'SHOPIFY'""",
+    ]
+    assert result == [
+        to_timestamp("2025-01-01"),
+        to_timestamp("2025-01-02"),
+        to_timestamp("2025-01-03"),
+    ]
 
 
 @pytest.mark.parametrize(
