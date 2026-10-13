@@ -205,6 +205,29 @@ def test_session(
         assert to_sql_calls(adapter) == expected_exception_calls
 
 
+def test_get_table_last_modified_ts_quoted_and_unquoted_catalogs(
+    snowflake_mocked_engine_adapter: SnowflakeEngineAdapter,
+) -> None:
+    # unquoted raw resolves to the database RAW, quoted "raw" is a different database,
+    # so the two must be looked up in two different information schemas
+    adapter = snowflake_mocked_engine_adapter
+    adapter.cursor.fetchall.side_effect = [
+        [(datetime(2025, 1, 1, tzinfo=timezone.utc),)],
+        [(datetime(2025, 1, 2, tzinfo=timezone.utc),)],
+    ]
+
+    result = adapter.get_table_last_modified_ts(['"raw".shopify.orders', "raw.shopify.customers"])
+
+    assert result == [
+        to_timestamp(datetime(2025, 1, 1, tzinfo=timezone.utc)),
+        to_timestamp(datetime(2025, 1, 2, tzinfo=timezone.utc)),
+    ]
+    assert to_sql_calls(adapter) == [
+        """SELECT LAST_ALTERED FROM "raw".INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'orders' AND TABLE_SCHEMA = 'shopify'""",
+        """SELECT LAST_ALTERED FROM raw.INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'customers' AND TABLE_SCHEMA = 'shopify'""",
+    ]
+
+
 def test_comments(make_mocked_engine_adapter: t.Callable, mocker: MockerFixture):
     adapter = make_mocked_engine_adapter(SnowflakeEngineAdapter)
 

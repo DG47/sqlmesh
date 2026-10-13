@@ -758,21 +758,19 @@ class SnowflakeEngineAdapter(
         from sqlmesh.utils.date import to_timestamp
 
         # INFORMATION_SCHEMA only contains the objects of the database it belongs to, so the tables
-        # are grouped by database and each group is looked up in its own database's INFORMATION_SCHEMA
-        catalogs_to_tables: t.Dict[str, t.List[exp.Table]] = {}
+        # are grouped by database and each group is looked up in its own database's INFORMATION_SCHEMA.
+        # The groups are keyed on the catalog identifier rather than its name, because quoting matters
+        # in Snowflake: unquoted raw is the database RAW, while quoted "raw" is a different database
+        catalogs_to_tables: t.Dict[t.Optional[exp.Identifier], t.List[exp.Table]] = {}
         for table_name in table_names:
             table = exp.to_table(table_name)
-            catalogs_to_tables.setdefault(table.catalog, []).append(table)
+            catalogs_to_tables.setdefault(table.args.get("catalog"), []).append(table)
 
         results = []
-        for tables in catalogs_to_tables.values():
+        for catalog, tables in catalogs_to_tables.items():
             query = (
                 exp.select("LAST_ALTERED")
-                .from_(
-                    exp.table_(
-                        "TABLES", db="INFORMATION_SCHEMA", catalog=tables[0].args.get("catalog")
-                    )
-                )
+                .from_(exp.table_("TABLES", db="INFORMATION_SCHEMA", catalog=catalog))
                 .where(
                     exp.or_(
                         *(
