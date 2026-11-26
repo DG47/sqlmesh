@@ -1960,6 +1960,74 @@ def test_get_schema_differ():
     assert schema_differ_with_override.drop_cascade is False
 
 
+@pytest.mark.parametrize(
+    "current_type, new_type",
+    [
+        ("INT", "BIGINT"),
+        ("BIGINT", "INT"),
+        ("INTEGER", "SMALLINT"),
+        ("TINYINT", "BYTEINT"),
+        ("INT", "NUMBER(38, 0)"),
+        ("NUMBER(38, 0)", "BIGINT"),
+        ("NUMBER", "INT"),
+    ],
+)
+def test_snowflake_integer_synonyms_are_not_a_type_change(current_type: str, new_type: str):
+    # Snowflake stores all of these as NUMBER(38, 0), so there is nothing to alter
+    differ = get_schema_differ("snowflake")
+    operations = differ.compare_columns(
+        "apply_to_table",
+        {"id": exp.DataType.build(current_type, dialect="snowflake")},
+        {"id": exp.DataType.build(new_type, dialect="snowflake")},
+    )
+    assert operations == []
+
+
+@pytest.mark.parametrize(
+    "current_type, new_type, expected",
+    [
+        (
+            "INT",
+            "NUMBER(10, 0)",
+            [
+                "ALTER TABLE apply_to_table DROP COLUMN id",
+                "ALTER TABLE apply_to_table ADD id DECIMAL(10, 0)",
+            ],
+        ),
+        (
+            "BIGINT",
+            "VARCHAR",
+            [
+                "ALTER TABLE apply_to_table DROP COLUMN id",
+                "ALTER TABLE apply_to_table ADD id VARCHAR",
+            ],
+        ),
+    ],
+)
+def test_snowflake_integer_synonyms_real_type_change(
+    current_type: str, new_type: str, expected: t.List[str]
+):
+    differ = get_schema_differ("snowflake")
+    operations = differ.compare_columns(
+        "apply_to_table",
+        {"id": exp.DataType.build(current_type, dialect="snowflake")},
+        {"id": exp.DataType.build(new_type, dialect="snowflake")},
+    )
+    assert [op.expression.sql(dialect="snowflake") for op in operations] == expected
+
+
+def test_integer_types_are_distinct_without_synonyms():
+    operations = SchemaDiffer().compare_columns(
+        "apply_to_table",
+        {"id": exp.DataType.build("INT")},
+        {"id": exp.DataType.build("BIGINT")},
+    )
+    assert [op.expression.sql() for op in operations] == [
+        "ALTER TABLE apply_to_table DROP COLUMN id",
+        "ALTER TABLE apply_to_table ADD COLUMN id BIGINT",
+    ]
+
+
 def test_ignore_destructive_edge_cases():
     """Test edge cases for ignore_destructive behavior."""
     schema_differ = SchemaDiffer(support_positional_add=True)

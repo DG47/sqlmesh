@@ -83,6 +83,22 @@ class SnowflakeEngineAdapter(
             exp.DataType.build("TIMESTAMP_NTZ", dialect=DIALECT).this: [(9,)],
             exp.DataType.build("TIMESTAMP_TZ", dialect=DIALECT).this: [(9,)],
         },
+        # INT, INTEGER, BIGINT, SMALLINT, TINYINT and BYTEINT are all NUMBER(38, 0) in Snowflake (INTEGER and BYTEINT
+        # parse to INT): https://docs.snowflake.com/en/sql-reference/data-types-numeric#int-integer-bigint-smallint-tinyint-byteint
+        "type_synonyms": {
+            exp.DataType.build("INT", dialect=DIALECT).this: exp.DataType.build(
+                "NUMBER(38, 0)", dialect=DIALECT
+            ),
+            exp.DataType.build("BIGINT", dialect=DIALECT).this: exp.DataType.build(
+                "NUMBER(38, 0)", dialect=DIALECT
+            ),
+            exp.DataType.build("SMALLINT", dialect=DIALECT).this: exp.DataType.build(
+                "NUMBER(38, 0)", dialect=DIALECT
+            ),
+            exp.DataType.build("TINYINT", dialect=DIALECT).this: exp.DataType.build(
+                "NUMBER(38, 0)", dialect=DIALECT
+            ),
+        },
     }
     MANAGED_TABLE_KIND = "DYNAMIC TABLE"
     SNOWPARK = "snowpark"

@@ -350,6 +350,10 @@ class SchemaDiffer(PydanticModel):
         max_parameter_length: Numeric parameter values corresponding to "max". Example: `VARCHAR(max)` -> `VARCHAR(65535)`.
         types_with_unlimited_length: Data types that accept values of any length up to system limits. Any explicitly
             parameterized type can ALTER to its unlimited length version, along with different types in some engines.
+        type_synonyms: Data types that the engine stores as another data type. Dict key is a sqlglot exp.DataType.Type,
+            built from the dialect string like in `parameterized_type_defaults`, and value is the data type the engine
+            uses for it. Example: Snowflake stores INT and BIGINT as NUMBER(38,0), so changing a column from INT to BIGINT
+            or NUMBER(38,0) is not a type change.
         treat_alter_data_type_as_destructive: The SchemaDiffer will only output change data type operations if it
             concludes the change is compatible and won't result in data loss. If this flag is set to True, it will
             flag these data type changes as destructive. This was added for dbt adapter support and likely shouldn't
@@ -369,6 +373,7 @@ class SchemaDiffer(PydanticModel):
     parameterized_type_defaults: t.Dict[exp.DType, t.List[t.Tuple[t.Union[int, float], ...]]] = {}
     max_parameter_length: t.Dict[exp.DType, t.Union[int, float]] = {}
     types_with_unlimited_length: t.Dict[exp.DType, t.Set[exp.DType]] = {}
+    type_synonyms: t.Dict[exp.DType, exp.DataType] = {}
     treat_alter_data_type_as_destructive: bool = False
 
     _coerceable_types: t.Dict[exp.DataType, t.Set[exp.DataType]] = {}
@@ -401,6 +406,16 @@ class SchemaDiffer(PydanticModel):
         if not new_type.expressions and new_type.this in self.types_with_unlimited_length:
             return current_type.this in self.types_with_unlimited_length[new_type.this]
         return False
+
+    def _resolve_type_synonym(self, type: exp.DataType) -> exp.DataType:
+        if type.expressions:
+            return type
+        return self.type_synonyms.get(type.this, type)
+
+    def _is_same_type(self, current_type: exp.DataType, new_type: exp.DataType) -> bool:
+        if current_type == new_type:
+            return True
+        return self._resolve_type_synonym(current_type) == self._resolve_type_synonym(new_type)
 
     def _is_coerceable_type(self, current_type: exp.DataType, new_type: exp.DataType) -> bool:
         if current_type in self.coerceable_types:
@@ -702,7 +717,7 @@ class SchemaDiffer(PydanticModel):
             _, new_type = _get_name_and_type(new_kwarg)
             _, current_type = _get_name_and_type(current_kwarg)
             columns = parent_columns + [TableAlterColumn.from_struct_kwarg(current_kwarg)]
-            if new_type == current_type:
+            if self._is_same_type(current_type, new_type):
                 continue
             operations.extend(
                 self._alter_operation(
